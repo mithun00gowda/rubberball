@@ -2,6 +2,32 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>GIDClientID</key>
+    <!-- TODO Replace this value: -->
+    <!-- Copied from GoogleService-Info.plist key CLIENT_ID -->
+    <string>142783030266-bglee81gerhsb5hf3frqd1am4tuj1ld6.apps.googleusercontent.com</string>
+    <!-- Put me in the [my_project]/ios/Runner/Info.plist file -->
+    <!-- Google Sign-in Section -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <!-- TODO Replace this value: -->
+                <!-- Copied from GoogleService-Info.plist key REVERSED_CLIENT_ID -->
+                <string>com.googleusercontent.apps.142783030266-bglee81gerhsb5hf3frqd1am4tuj1ld6</string>
+            </array>
+        </dict>
+    </array>
+<!-- End of the Google Sign-in Section -->
+    <key>NSCameraUsageDescription</key>
+    <string>RubberBall needs access to your camera to let you take a profile picture.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>RubberBall needs access to your photo library to let you select a profile picture.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>RubberBall needs permission to save photos to your gallery.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
