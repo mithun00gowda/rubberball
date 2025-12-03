@@ -21,8 +21,6 @@ class ScoringProvider with ChangeNotifier {
   bool get isCaptainA => _matchData?.captainAId == _auth.currentUser?.uid;
   bool get isCaptainB => _matchData?.captainBId == _auth.currentUser?.uid;
   bool get isHost => _matchData?.hostId == _auth.currentUser?.uid;
-
-  // Allows both captains and host to score
   bool get canScore => isCaptainA || isCaptainB || isHost;
 
   // --- Initialization ---
@@ -37,49 +35,56 @@ class ScoringProvider with ChangeNotifier {
     _db.collection('matches').doc(_matchId).snapshots().listen((snapshot) {
       if (snapshot.exists) {
         _matchData = MatchLobbyModel.fromMap(snapshot.data()!);
-
         if (snapshot.data()!.containsKey('score')) {
           _scoreData = MatchScoreModel.fromMap(snapshot.data()!['score']);
         }
-
         notifyListeners();
       }
     });
   }
 
-  // --- Helper: Dynamic Max Overs ---
+  // --- Helper: Dynamic Max Overs Calculation ---
+  // Calculates strictly based on "Players Available to Bowl" * "Overs Per Person"
   int get currentMaxOvers {
     if (_matchData == null) return 0;
-    // Estimate innings based on target availability
-    int estInnings = (_scoreData.playerStats.containsKey('target') && _scoreData.playerStats['target'] > 0) ? 2 : 1;
-    // However, rely on the explicit currentInnings if available in your model or map
-    // Since MatchScoreModel doesn't expose it directly as a typed field yet (it's in the map),
-    // we use this heuristic or need to update the model.
-    // For safety, checking the raw map if needed, but here assuming target logic holds.
-    return _calculateMaxOvers(_matchData!, estInnings);
+
+    // Check current innings from map (default to 1)
+    int currentInnings = _scoreData.playerStats.containsKey('currentInnings')
+        ? _scoreData.playerStats['currentInnings']
+        : 1; // Fallback helper since model field might be missing in older version
+
+    return _calculateMaxOvers(_matchData!, currentInnings);
   }
 
   int _calculateMaxOvers(MatchLobbyModel match, int currentInnings) {
+    // If not using dynamic overs, return the fixed total
     if (!match.isPlayerBasedOvers) return match.totalOvers;
 
-    // Determine who batted first based on Toss
+    // 1. Determine who batted first
     bool teamABatsFirst = (match.tossWinnerTeam == 'A' && match.tossDecision == 'BAT') ||
         (match.tossWinnerTeam == 'B' && match.tossDecision == 'BOWL');
 
-    // Logic Fix:
-    // Innings 1: If A Bats First -> Team A is Batting, Team B is Bowling.
-    // Innings 2: If A Bats First -> Team B is Batting, Team A is Bowling.
+    // 2. Identify Bowling Team for this innings
+    // Innings 1: If A Batting -> B Bowling
+    // Innings 2: If A Batting -> B Bowling (Wait, in Innings 2, roles swap)
 
-    bool teamABowls = (currentInnings == 1 && !teamABatsFirst) || (currentInnings == 2 && teamABatsFirst);
+    bool teamABowls;
+    if (currentInnings == 1) {
+      teamABowls = !teamABatsFirst;
+    } else {
+      teamABowls = teamABatsFirst; // In 2nd innings, the team that batted first is now bowling
+    }
 
+    // 3. Count Players in Bowling Team
     int bowlersCount = teamABowls ? match.teamAPlayers.length : match.teamBPlayers.length;
 
-    // In 1v1, count is 1. If 2 players join B, count becomes 3.
-    // Fallback to 1 if empty to avoid 0 overs.
-    return (bowlersCount == 0 ? 1 : bowlersCount) * match.oversPerPlayer;
+    // 4. Calculate: Players * OversPerPlayer
+    // e.g., 1 player * 1 over = 1 over total.
+    int calculated = (bowlersCount == 0 ? 1 : bowlersCount) * match.oversPerPlayer;
+    return calculated;
   }
 
-  // --- Scoring Actions (Transactions) ---
+  // --- Scoring Actions ---
 
   Future<void> addRun(int runs) async {
     if (!canScore || _matchId == null) return;
@@ -111,11 +116,9 @@ class ScoringProvider with ChangeNotifier {
 
       final data = snapshot.data()!;
       final matchLobby = MatchLobbyModel.fromMap(data);
-
       final scoreMap = data['score'] as Map<String, dynamic>? ?? MatchScoreModel().toMap();
       final currentScore = MatchScoreModel.fromMap(scoreMap);
 
-      // Extract Extended State
       int currentInnings = scoreMap['currentInnings'] ?? 1;
       int target = scoreMap['target'] ?? 0;
       bool isSingleWicketMode = data['isSingleWicketMode'] ?? (matchLobby.teamSize == 1);
@@ -131,7 +134,7 @@ class ScoringProvider with ChangeNotifier {
       newRecent.add(ballLabel);
       if (newRecent.length > 12) newRecent.removeAt(0);
 
-      // 2. Ball Counting Logic
+      // 2. Ball Counting
       bool isLegal = !isExtra;
       if (isLegal) {
         newBalls++;
@@ -143,19 +146,15 @@ class ScoringProvider with ChangeNotifier {
         }
       }
 
-      // 3. Update Individual Stats
+      // 3. Stats Update (Striker/Bowler)
       Map<String, dynamic> stats = Map.from(currentScore.playerStats);
-
       if (currentScore.strikerId.isNotEmpty && currentScore.strikerId != 'NONE' && !isExtra) {
         final pid = currentScore.strikerId;
         final pStat = Map<String, dynamic>.from(stats[pid] ?? {});
         pStat['runs'] = (pStat['runs'] ?? 0) + runs;
         pStat['balls'] = (pStat['balls'] ?? 0) + 1;
-        if (runs == 4) pStat['4s'] = (pStat['4s'] ?? 0) + 1;
-        if (runs == 6) pStat['6s'] = (pStat['6s'] ?? 0) + 1;
         stats[pid] = pStat;
       }
-
       if (currentScore.bowlerId.isNotEmpty && currentScore.bowlerId != 'NONE') {
         final bid = currentScore.bowlerId;
         final bStat = Map<String, dynamic>.from(stats[bid] ?? {});
@@ -165,33 +164,31 @@ class ScoringProvider with ChangeNotifier {
         stats[bid] = bStat;
       }
 
-      // 4. Check End Conditions
+      // 4. CHECK END CONDITIONS (Crucial Logic)
+
+      // A. Calculate Max Overs based on ACTUAL players present now
       int maxOversForInnings = _calculateMaxOvers(matchLobby, currentInnings);
 
-      // Dynamic Wicket Limit Calculation:
-      // If Single Wicket Mode: Wicket Limit = 1 (Regardless of team size setting)
-      // Else: Wicket Limit = Actual Players in Batting Team - 1 (Standard) or Actual Players (Last Man Standing)
-
+      // B. Calculate Wicket Limit based on ACTUAL players
       bool teamABatsFirst = (matchLobby.tossWinnerTeam == 'A' && matchLobby.tossDecision == 'BAT') ||
           (matchLobby.tossWinnerTeam == 'B' && matchLobby.tossDecision == 'BOWL');
-
-      // Determine currently batting team list
       bool teamABatsNow = (currentInnings == 1 && teamABatsFirst) || (currentInnings == 2 && !teamABatsFirst);
+
+      // Get the list of players currently batting
       int battingTeamCount = teamABatsNow ? matchLobby.teamAPlayers.length : matchLobby.teamBPlayers.length;
+      if (battingTeamCount == 0) battingTeamCount = 1; // Safety
 
-      // If dynamic, use actual count. If static, use configured teamSize.
-      // For Single Wicket mode, the limit is strictly 1 wicket per innings effectively?
-      // User said: "if one wicket gone then bowling team come to bat".
-      // If it's a 1v1 match, battingTeamCount is 1. Wicket Limit = 1.
-
+      // Limit Logic:
+      // If 1v1 (Single Wicket), 1 wicket = All Out.
+      // If Gully Mode (Last Man Standing), N players = N wickets.
+      // If Standard, N players = N-1 wickets.
       int wicketLimit;
-      if (isSingleWicketMode || battingTeamCount == 1) {
-        wicketLimit = 1; // 1 player = 1 wicket allowed
+      if (isSingleWicketMode || matchLobby.isPlayerBasedOvers) {
+        // In gully cricket "Player Based", usually every player gets to bat.
+        // So if 2 players, 2 wickets allowed (Last man standing logic is common).
+        wicketLimit = battingTeamCount;
       } else {
-        wicketLimit = battingTeamCount - 1; // Standard cricket (10 wickets for 11 players)
-        // If playing "Last Man Standing", use battingTeamCount.
-        // Assuming standard gully rules often allow last man, let's use battingTeamCount if < 11?
-        // Let's stick to standard count for now, but safe fallback.
+        wicketLimit = battingTeamCount - 1; // Standard
         if (wicketLimit < 1) wicketLimit = 1;
       }
 
@@ -201,43 +198,42 @@ class ScoringProvider with ChangeNotifier {
 
       Map<String, dynamic> updates = {};
 
-      // SCENARIO A: MATCH ENDED
+      // --- MATCH ENDED ---
       if (isChased || (currentInnings == 2 && (isAllOut || isOversDone))) {
         updates['status'] = 'COMPLETED';
 
         String winnerId;
         if (newRuns >= target) {
-          winnerId = teamABatsFirst ? 'B' : 'A';
+          winnerId = teamABatsNow ? (teamABatsNow ? 'A' : 'B') : (teamABatsFirst ? 'B' : 'A');
+          // Logic correction: If chasing team (current batting) has >= target, they win.
+          winnerId = teamABatsNow ? (teamABatsFirst ? 'B' : 'A') : 'DRAW'; // Wait, simpler:
+          // If currentInnings == 2 (Chasing), and newRuns >= target, Batting Team Wins.
+          winnerId = teamABatsNow ? 'A' : 'B'; // Whichever team is batting now wins
         } else if (newRuns == target - 1) {
           winnerId = 'DRAW';
         } else {
-          winnerId = teamABatsFirst ? 'A' : 'B';
+          // Defending team won
+          winnerId = teamABatsNow ? 'B' : 'A'; // Whichever team is NOT batting wins
         }
         updates['winner'] = winnerId;
 
         updates['score'] = {
-          'runs': newRuns,
-          'wickets': newWickets,
-          'overs': newOvers,
-          'balls': newBalls,
-          'strikerId': currentScore.strikerId,
-          'nonStrikerId': currentScore.nonStrikerId,
-          'bowlerId': currentScore.bowlerId,
-          'recentBalls': newRecent,
-          'playerStats': stats,
-          'currentInnings': 2,
-          'target': target,
+          'runs': newRuns, 'wickets': newWickets, 'overs': newOvers, 'balls': newBalls,
+          'strikerId': currentScore.strikerId, 'nonStrikerId': currentScore.nonStrikerId,
+          'bowlerId': currentScore.bowlerId, 'recentBalls': newRecent, 'playerStats': stats,
+          'currentInnings': 2, 'target': target,
         };
 
       }
-      // SCENARIO B: INNINGS BREAK
+      // --- SWAP TEAMS (INNINGS END) ---
       else if (currentInnings == 1 && (isAllOut || isOversDone)) {
         updates['score'] = {
           'runs': 0,
           'wickets': 0,
           'overs': 0,
           'balls': 0,
-          'strikerId': '',
+          'strikerId': '', // Force re-select for new batting team
+          // If Single Wicket mode is ON, default Non-Striker to 'NONE' immediately
           'nonStrikerId': isSingleWicketMode ? 'NONE' : '',
           'bowlerId': '',
           'recentBalls': [],
@@ -247,37 +243,27 @@ class ScoringProvider with ChangeNotifier {
           'innings1Score': '$newRuns/$newWickets ($newOvers.$newBalls)',
         };
       }
-      // SCENARIO C: BALL COMPLETED
+      // --- CONTINUE ---
       else {
+        // Normal ball update logic (Swap strike etc)
         String nextStriker = currentScore.strikerId;
         String nextNonStriker = currentScore.nonStrikerId;
         bool noSwapNeeded = nextNonStriker == 'NONE';
 
         if (!noSwapNeeded) {
           if (isLegal && !isWicket && (runs % 2 != 0)) {
-            final temp = nextStriker;
-            nextStriker = nextNonStriker;
-            nextNonStriker = temp;
+            final temp = nextStriker; nextStriker = nextNonStriker; nextNonStriker = temp;
           }
           if (isLegal && newBalls == 0 && newOvers > currentScore.overs) {
-            final temp = nextStriker;
-            nextStriker = nextNonStriker;
-            nextNonStriker = temp;
+            final temp = nextStriker; nextStriker = nextNonStriker; nextNonStriker = temp;
           }
         }
 
         updates['score'] = {
-          'runs': newRuns,
-          'wickets': newWickets,
-          'overs': newOvers,
-          'balls': newBalls,
-          'strikerId': nextStriker,
-          'nonStrikerId': nextNonStriker,
-          'bowlerId': currentScore.bowlerId,
-          'recentBalls': newRecent,
-          'playerStats': stats,
-          'currentInnings': currentInnings,
-          'target': target,
+          'runs': newRuns, 'wickets': newWickets, 'overs': newOvers, 'balls': newBalls,
+          'strikerId': nextStriker, 'nonStrikerId': nextNonStriker, 'bowlerId': currentScore.bowlerId,
+          'recentBalls': newRecent, 'playerStats': stats,
+          'currentInnings': currentInnings, 'target': target,
         };
       }
 
@@ -285,7 +271,7 @@ class ScoringProvider with ChangeNotifier {
     });
   }
 
-  // --- Session / Match Management ---
+  // --- Session Management ---
 
   Future<void> setSingleWicketMode(bool enable) async {
     if (!canScore || _matchId == null) return;
@@ -297,56 +283,40 @@ class ScoringProvider with ChangeNotifier {
 
   Future<void> startNextMatchInSession(String decision) async {
     if (_matchId == null || !canScore) return;
-
     final docRef = _db.collection('matches').doc(_matchId);
     final doc = await docRef.get();
     if (!doc.exists) return;
 
-    final winner = doc.data()?['winner'] ?? 'A';
-
-    // Check if Single Wicket was active to persist it
-    final isSingleWicket = doc.data()?['isSingleWicketMode'] ?? false;
+    // Auto-rotate: Winner usually gets choice, or we just keep rotation.
+    // Logic: If 'decision' is passed (e.g. Winner chose BAT), set that.
 
     await docRef.update({
       'status': 'LIVE',
-      'tossWinnerTeam': winner == 'DRAW' ? 'A' : winner,
+      'tossWinnerTeam': doc.data()?['winner'] ?? 'A', // Previous winner decides
       'tossDecision': decision,
       'winner': FieldValue.delete(),
       'score': {
-        'runs': 0,
-        'wickets': 0,
-        'overs': 0,
-        'balls': 0,
-        'strikerId': '',
-        'nonStrikerId': isSingleWicket ? 'NONE' : '',
-        'bowlerId': '',
-        'recentBalls': [],
-        'playerStats': {},
-        'currentInnings': 1,
-        'target': 0,
+        'runs': 0, 'wickets': 0, 'overs': 0, 'balls': 0,
+        'strikerId': '', 'nonStrikerId': '', 'bowlerId': '',
+        'recentBalls': [], 'playerStats': {},
+        'currentInnings': 1, 'target': 0,
       }
     });
   }
 
   Future<void> endSession() async {
     if (_matchId == null || !canScore) return;
-    await _db.collection('matches').doc(_matchId).update({
-      'status': 'SESSION_ENDED',
-    });
+    await _db.collection('matches').doc(_matchId).update({'status': 'SESSION_ENDED'});
   }
 
-  Future<void> setStriker(String playerId) async {
-    if (!canScore) return;
-    await _db.collection('matches').doc(_matchId).update({'score.strikerId': playerId});
+  // Player Setters
+  Future<void> setStriker(String uid) async {
+    if(canScore) await _db.collection('matches').doc(_matchId).update({'score.strikerId': uid});
   }
-
-  Future<void> setNonStriker(String playerId) async {
-    if (!canScore) return;
-    await _db.collection('matches').doc(_matchId).update({'score.nonStrikerId': playerId});
+  Future<void> setNonStriker(String uid) async {
+    if(canScore) await _db.collection('matches').doc(_matchId).update({'score.nonStrikerId': uid});
   }
-
-  Future<void> setBowler(String playerId) async {
-    if (!canScore) return;
-    await _db.collection('matches').doc(_matchId).update({'score.bowlerId': playerId});
+  Future<void> setBowler(String uid) async {
+    if(canScore) await _db.collection('matches').doc(_matchId).update({'score.bowlerId': uid});
   }
 }
