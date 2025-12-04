@@ -7,7 +7,6 @@ import 'package:rubberball/providers/match_lobby_provider.dart';
 import 'package:rubberball/providers/match_provider.dart';
 import 'package:rubberball/providers/scoring_provider.dart';
 import 'package:rubberball/providers/user_profile_provider.dart';
-import 'package:rubberball/root_screen.dart';
 import 'package:rubberball/screens/auth/auth_wrapper.dart';
 import 'package:rubberball/services/auth_service.dart';
 

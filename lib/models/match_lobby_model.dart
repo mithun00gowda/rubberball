@@ -11,13 +11,14 @@ class MatchLobbyModel {
   final String? captainBId;
   final DateTime createdAt;
 
-  // --- Toss Details ---
+  // --- Toss & Result ---
   final String? tossWinnerTeam;
   final String? tossDecision;
+  final String? winner; // NEW: Added winner field
 
   // --- Rules ---
   final String matchType; // 'LIMITED_OVERS', 'BOX_CRICKET'
-  final bool isSingleWicketMode; // NEW: Determines if non-strikers exist
+  final bool isSingleWicketMode;
   final int totalOvers;
   final int teamSize;
   final int ballsPerOver;
@@ -40,8 +41,9 @@ class MatchLobbyModel {
     required this.createdAt,
     this.tossWinnerTeam,
     this.tossDecision,
+    this.winner, // Add to constructor
     this.matchType = 'LIMITED_OVERS',
-    this.isSingleWicketMode = false, // Default Standard
+    this.isSingleWicketMode = false,
     required this.totalOvers,
     this.teamSize = 11,
     this.ballsPerOver = 6,
@@ -66,6 +68,7 @@ class MatchLobbyModel {
       'createdAt': createdAt.toIso8601String(),
       'tossWinnerTeam': tossWinnerTeam,
       'tossDecision': tossDecision,
+      'winner': winner, // Save to DB
       'matchType': matchType,
       'isSingleWicketMode': isSingleWicketMode,
       'totalOvers': totalOvers,
@@ -93,6 +96,7 @@ class MatchLobbyModel {
       createdAt: DateTime.parse(map['createdAt'] ?? DateTime.now().toIso8601String()),
       tossWinnerTeam: map['tossWinnerTeam'],
       tossDecision: map['tossDecision'],
+      winner: map['winner'], // Read from DB
       matchType: map['matchType'] ?? 'LIMITED_OVERS',
       isSingleWicketMode: map['isSingleWicketMode'] ?? false,
       totalOvers: map['totalOvers'] ?? 10,

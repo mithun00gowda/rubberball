@@ -14,7 +14,7 @@ class MatchLobbyProvider with ChangeNotifier {
     required String teamBName,
     required int overs,
     required String matchType,
-    required bool isSingleWicketMode, // NEW ARGUMENT
+    required bool isSingleWicketMode,
     required int teamSize,
     required int ballsPerOver,
     required bool rebowlWideNoBall,
@@ -44,7 +44,6 @@ class MatchLobbyProvider with ChangeNotifier {
       teamAName: teamAName.isNotEmpty ? teamAName : "Team A",
       teamBName: teamBName.isNotEmpty ? teamBName : "Team B",
 
-      // Rules
       isSingleWicketMode: isSingleWicketMode,
       totalOvers: initialOvers,
       matchType: matchType,
@@ -60,58 +59,61 @@ class MatchLobbyProvider with ChangeNotifier {
     return matchId;
   }
 
-  // ... (Keep existing joinTeam, assignCaptain, proceedToToss, startMatch, matchStream) ...
-  // Ensure you retain the other methods from the previous iterations.
-
-  Stream<MatchLobbyModel> matchStream(String matchId) {
-    return _db.collection('matches').doc(matchId).snapshots().map((snapshot) {
-      if (!snapshot.exists) throw Exception("Match not found");
-      return MatchLobbyModel.fromMap(snapshot.data()!);
-    });
-  }
-
-  // (Paste other methods like joinTeam, startMatch here if you are replacing the whole file)
-  // For brevity, assuming they exist as previously defined.
   Future<void> joinTeam(String matchId, String teamSide) async {
     final user = _auth.currentUser;
     if (user == null) throw Exception("User not logged in");
-    final player = LobbyPlayer(uid: user.uid, name: user.displayName ?? 'Player', photoUrl: user.photoURL);
+
+    final player = LobbyPlayer(
+        uid: user.uid,
+        name: user.displayName ?? 'Player',
+        photoUrl: user.photoURL
+    );
+
     final docRef = _db.collection('matches').doc(matchId);
-    await _db.runTransaction((transaction) async {
-      final snapshot = await transaction.get(docRef);
-      if (!snapshot.exists) throw Exception("Match not found");
-      final data = snapshot.data()!;
-      final bool isDynamic = data['isPlayerBasedOvers'] ?? false;
-      final int perPlayer = data['oversPerPlayer'] ?? 1;
-      final int currentOvers = data['totalOvers'] ?? 0;
-      if (teamSide == 'A') {
-        transaction.update(docRef, {'teamAPlayers': FieldValue.arrayUnion([player.toMap()])});
-      } else {
-        transaction.update(docRef, {'teamBPlayers': FieldValue.arrayUnion([player.toMap()])});
-      }
-      if (isDynamic) {
-        transaction.update(docRef, {'totalOvers': currentOvers + perPlayer});
-      }
-    });
+
+    // FIXED: joinTeam only adds the player.
+    // Overs are calculated dynamically in ScoringProvider, so we don't manually increment 'totalOvers' here.
+    if (teamSide == 'A') {
+      await docRef.update({
+        'teamAPlayers': FieldValue.arrayUnion([player.toMap()])
+      });
+    } else {
+      await docRef.update({
+        'teamBPlayers': FieldValue.arrayUnion([player.toMap()])
+      });
+    }
   }
 
   Future<void> assignCaptain(String matchId, String teamSide, String userId) async {
     final field = teamSide == 'A' ? 'captainAId' : 'captainBId';
-    await _db.collection('matches').doc(matchId).update({field: userId});
+    await _db.collection('matches').doc(matchId).update({
+      field: userId,
+    });
   }
 
   Future<void> proceedToToss(String matchId) async {
-    await _db.collection('matches').doc(matchId).update({'status': 'TOSS'});
+    await _db.collection('matches').doc(matchId).update({
+      'status': 'TOSS',
+    });
   }
 
   Future<void> saveTossWinner(String matchId, String winningTeamSide) async {
-    await _db.collection('matches').doc(matchId).update({'tossWinnerTeam': winningTeamSide});
+    await _db.collection('matches').doc(matchId).update({
+      'tossWinnerTeam': winningTeamSide,
+    });
   }
 
   Future<void> startMatch(String matchId, String decision) async {
     await _db.collection('matches').doc(matchId).update({
       'tossDecision': decision,
       'status': 'LIVE',
+    });
+  }
+
+  Stream<MatchLobbyModel> matchStream(String matchId) {
+    return _db.collection('matches').doc(matchId).snapshots().map((snapshot) {
+      if (!snapshot.exists) throw Exception("Match not found");
+      return MatchLobbyModel.fromMap(snapshot.data()!);
     });
   }
 }

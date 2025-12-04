@@ -5,7 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:rubberball/providers/match_lobby_provider.dart';
 import 'package:rubberball/screens/score_update_screen.dart';
 
-import 'match_lobby_screen.dart'; // Import scorecard
+import 'match_lobby_screen.dart';
 
 class JoinMatchQRScanner extends StatefulWidget {
   const JoinMatchQRScanner({super.key});
@@ -15,7 +15,7 @@ class JoinMatchQRScanner extends StatefulWidget {
 }
 
 class _JoinMatchQRScannerState extends State<JoinMatchQRScanner> {
-  bool _isScanned = false; // Prevent multiple scans
+  bool _isScanned = false;
 
   void _onDetect(BarcodeCapture capture) async {
     if (_isScanned) return;
@@ -31,9 +31,10 @@ class _JoinMatchQRScannerState extends State<JoinMatchQRScanner> {
         if (doc.exists) {
           final status = doc.data()?['status'];
 
-          if (status == 'LIVE') {
+          // FIXED: If LIVE or COMPLETED, go directly to Scoreboard (Spectator Mode)
+          // Do NOT show the Team Selection sheet immediately.
+          if (status == 'LIVE' || status == 'COMPLETED') {
             if (!mounted) return;
-            // Go straight to scoreboard
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(builder: (_) => ScoreUpdateScreen(matchId: matchId)),
@@ -42,7 +43,7 @@ class _JoinMatchQRScannerState extends State<JoinMatchQRScanner> {
           }
         }
 
-        // 2. If not LIVE, show team selection
+        // 2. If LOBBY, show team selection
         if (!mounted) return;
         showModalBottomSheet(
           context: context,
@@ -50,14 +51,14 @@ class _JoinMatchQRScannerState extends State<JoinMatchQRScanner> {
           enableDrag: false,
           builder: (ctx) => _TeamSelectionSheet(matchId: matchId),
         ).then((_) {
-          // Reset scan if they closed the sheet without joining
-          // Ideally handled inside, but for simple UX we just assume they join or leave
+          // If sheet closed without action, reset scan to allow rescanning
+          // (Ideally navigation handles this, but good for safety)
         });
 
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-          setState(() => _isScanned = false); // Retry
+          setState(() => _isScanned = false);
         }
       }
     }
@@ -92,9 +93,7 @@ class _TeamSelectionSheetState extends State<_TeamSelectionSheet> {
       await provider.joinTeam(widget.matchId, teamSide);
 
       if (!mounted) return;
-      // Close sheet
       Navigator.pop(context);
-      // Replace Scanner with Lobby Screen so they can see updates
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => MatchLobbyScreen(matchId: widget.matchId)),
