@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class UserProfileModel {
   final String id;
   final String name;
@@ -13,11 +15,19 @@ class UserProfileModel {
   final int totalRuns;
   final int wicketsTaken;
   final int manOfTheMatchCount;
+  final DateTime? lastPlayedAt;
 
-  // Derived Stat
+  // Derived Stats
   double get battingAverage {
     if (matchesPlayed == 0) return 0.0;
-    return totalRuns / matchesPlayed; // Simplified average logic
+    return totalRuns / matchesPlayed;
+  }
+
+  String get playerLevel {
+    if (matchesPlayed < 5) return "Rookie";
+    if (totalRuns > 500 || wicketsTaken > 50) return "Pro";
+    if (totalRuns > 200 || wicketsTaken > 20) return "Regular";
+    return "Amateur";
   }
 
   UserProfileModel({
@@ -33,30 +43,35 @@ class UserProfileModel {
     required this.totalRuns,
     required this.wicketsTaken,
     required this.manOfTheMatchCount,
+    this.lastPlayedAt,
   });
 
-  // Factory to create from Firestore DocumentSnapshot
   factory UserProfileModel.fromMap(Map<String, dynamic> data, String uid) {
+    DateTime? lastPlayed;
+    if (data['lastPlayedAt'] != null) {
+      if (data['lastPlayedAt'] is Timestamp) {
+        lastPlayed = (data['lastPlayedAt'] as Timestamp).toDate();
+      }
+    }
+
     return UserProfileModel(
       id: uid,
       name: data['name'] ?? 'Unknown Player',
       email: data['email'] ?? '',
-      // Fields that might not be in auth initially
       phoneNumber: data['phoneNumber'] ?? 'Not set',
-      role: data['role'] ?? 'Player',
+      role: data['role'] ?? 'All-Rounder',
       jerseyNumber: data['jerseyNumber'] ?? '--',
       teamName: data['teamName'] ?? 'Free Agent',
-      profileImageUrl: data['photoUrl'] ?? '', // Note: AuthService saves as 'photoUrl'
+      profileImageUrl: data['photoUrl'] ?? '',
 
-      // Stats
       matchesPlayed: data['matchesPlayed'] ?? 0,
       totalRuns: data['totalRuns'] ?? 0,
       wicketsTaken: data['wicketsTaken'] ?? 0,
       manOfTheMatchCount: data['manOfTheMatchCount'] ?? 0,
+      lastPlayedAt: lastPlayed,
     );
   }
 
-  // To save updates back to Firestore
   Map<String, dynamic> toMap() {
     return {
       'name': name,
@@ -65,7 +80,6 @@ class UserProfileModel {
       'jerseyNumber': jerseyNumber,
       'teamName': teamName,
       'photoUrl': profileImageUrl,
-      // Stats are usually updated via separate match logic, not profile edit
     };
   }
 }

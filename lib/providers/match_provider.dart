@@ -1,74 +1,74 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:rubberball/models/match_model.dart';
+import 'package:rubberball/models/match_lobby_model.dart';
 
 class MatchesProvider with ChangeNotifier {
-  // Local list acting as a cache or initial state
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
   List<MatchModel> _matches = [];
+  List<MatchModel> get matches => _matches;
 
-  // Getter to access matches in UI
-  List<MatchModel> get matches => [..._matches];
-
-  bool _isLoading = false;
+  bool _isLoading = true;
   bool get isLoading => _isLoading;
 
-  // Constructor simulates fetching data on initialization
+  StreamSubscription<QuerySnapshot>? _historySub;
+
   MatchesProvider() {
-    fetchMatches();
+    _initHistoryStream();
   }
 
-  // Simulating a network call or database fetch
-  Future<void> fetchMatches() async {
+  void _initHistoryStream() {
     _isLoading = true;
     notifyListeners();
 
-    // simulate network delay
-    await Future.delayed(const Duration(seconds: 1));
+    // Listen to ALL finalized sessions ordered by date
+    // Note: Ensure the Composite Index is created in Firebase Console
+    _historySub = _db
+        .collection('matches')
+        .where('status', isEqualTo: 'SESSION_ENDED')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snapshot) {
 
-    // Dummy Data - Replace this with Firebase Firestore logic later
-    _matches = [
-      MatchModel(
-        id: '1',
-        team1: 'Royal Strikers',
-        team2: 'Super Kings',
-        winnerTeamId: 'Royal Strikers',
-        resultDescription: 'Won by 14 runs',
-        matchDate: DateTime.now().subtract(const Duration(days: 1)),
-        scoresSummary: '112/4 (8.0) vs 98/6 (8.0)',
-        location: 'Central Park Ground',
-      ),
-      MatchModel(
-        id: '2',
-        team1: 'Thunder XI',
-        team2: 'Gully Boys',
-        winnerTeamId: 'Gully Boys',
-        resultDescription: 'Won by 4 wickets',
-        matchDate: DateTime.now().subtract(const Duration(days: 3)),
-        scoresSummary: '85/9 (10.0) vs 86/6 (9.2)',
-        location: 'Riverside Turf',
-      ),
-      MatchModel(
-        id: '3',
-        team1: 'Night Riders',
-        team2: 'Dawn Breakers',
-        winnerTeamId: 'Night Riders',
-        resultDescription: 'Won by Super Over',
-        matchDate: DateTime.now().subtract(const Duration(days: 7)),
-        scoresSummary: 'Tied (140/5)',
-        location: 'City Sports Complex',
-      ),
-      MatchModel(
-        id: '4',
-        team1: 'Spartans',
-        team2: 'Titans',
-        winnerTeamId: 'Titans',
-        resultDescription: 'Won by 50 runs',
-        matchDate: DateTime.now().subtract(const Duration(days: 10)),
-        scoresSummary: '150/2 (10) vs 100/10 (8.5)',
-        location: 'School Ground',
-      ),
-    ];
+      _matches = snapshot.docs.map((doc) {
+        final data = doc.data();
+        final lobby = MatchLobbyModel.fromMap(data);
 
-    _isLoading = false;
-    notifyListeners();
+        final scoreData = data['score'] as Map<String, dynamic>? ?? {};
+        final runs = scoreData['runs'] ?? 0;
+        final wickets = scoreData['wickets'] ?? 0;
+        final overs = "${scoreData['overs']}.${scoreData['balls']}";
+
+        String resultDesc = "Match Drawn";
+        if (data['winner'] == 'A') resultDesc = "${lobby.teamAName} Won";
+        if (data['winner'] == 'B') resultDesc = "${lobby.teamBName} Won";
+
+        return MatchModel(
+          id: lobby.matchId,
+          team1: lobby.teamAName,
+          team2: lobby.teamBName,
+          winnerTeamId: data['winner'] == 'A' ? lobby.teamAName : (data['winner'] == 'B' ? lobby.teamBName : "Draw"),
+          resultDescription: resultDesc,
+          matchDate: lobby.createdAt,
+          scoresSummary: "$runs/$wickets ($overs)",
+          location: lobby.location,
+        );
+      }).toList();
+
+      _isLoading = false;
+      notifyListeners();
+    }, onError: (e) {
+      debugPrint("Error streaming history: $e");
+      _isLoading = false;
+      notifyListeners();
+    });
+  }
+
+  @override
+  void dispose() {
+    _historySub?.cancel();
+    super.dispose();
   }
 }

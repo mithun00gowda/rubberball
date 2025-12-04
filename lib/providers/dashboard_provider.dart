@@ -1,74 +1,93 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:rubberball/models/match_lobby_model.dart';
 import 'package:rubberball/models/player_model.dart';
-import 'package:rubberball/models/match_model.dart';
 
 class DashboardProvider with ChangeNotifier {
-  // Flag to track if the provider has been disposed
-  bool _isDisposed = false;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  MatchLobbyModel? _liveMatch;
+
+  // FIXED: Changed from single PlayerModel? to List<PlayerModel>
+  List<PlayerModel> _topPerformers = [];
 
   bool _isLoading = true;
+
+  StreamSubscription<QuerySnapshot>? _matchSub;
+  StreamSubscription<QuerySnapshot>? _playerSub;
+
+  MatchLobbyModel? get liveMatch => _liveMatch;
+
+  // FIXED: Getter now returns the list
+  List<PlayerModel> get topPerformers => _topPerformers;
+
   bool get isLoading => _isLoading;
 
-  MatchModel? _liveMatch;
-  MatchModel? get liveMatch => _liveMatch;
-
-  PlayerModel? _topPerformer;
-  PlayerModel? get topPerformer => _topPerformer;
-
   DashboardProvider() {
-    loadDashboardData();
+    _initStreams();
+  }
+
+  void _initStreams() {
+    _isLoading = true;
+    notifyListeners();
+
+    // 1. Live Match Stream
+    _matchSub = _db
+        .collection('matches')
+        .where('status', whereIn: ['LIVE', 'COMPLETED'])
+        .limit(1)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.docs.isNotEmpty) {
+        _liveMatch = MatchLobbyModel.fromMap(snapshot.docs.first.data());
+      } else {
+        _liveMatch = null;
+      }
+      _checkLoadingComplete();
+    });
+
+    // 2. Top Performers Stream (Fetch Top 3)
+    _playerSub = _db
+        .collection('users')
+        .orderBy('totalRuns', descending: true)
+        .limit(3) // Limit to top 3
+        .snapshots()
+        .listen((snapshot) {
+
+      // Map documents to PlayerModel list
+      _topPerformers = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return PlayerModel(
+          id: data['uid'] ?? '',
+          name: data['name'] ?? 'Unknown',
+          role: data['role'] ?? 'Player',
+          imageUrl: data['photoUrl'] ?? '',
+          stats: {
+            'Runs': (data['totalRuns'] ?? 0).toString(),
+            'Wickets': (data['wicketsTaken'] ?? 0).toString(),
+            'Matches': (data['matchesPlayed'] ?? 0).toString(),
+          },
+        );
+      }).toList();
+
+      _checkLoadingComplete();
+    });
+  }
+
+  void _checkLoadingComplete() {
+    if (_isLoading) {
+      _isLoading = false;
+      notifyListeners();
+    } else {
+      notifyListeners();
+    }
   }
 
   @override
   void dispose() {
-    _isDisposed = true;
+    _matchSub?.cancel();
+    _playerSub?.cancel();
     super.dispose();
-  }
-
-  Future<void> loadDashboardData() async {
-    _isLoading = true;
-    // Only notify if not disposed
-    if (!_isDisposed) notifyListeners();
-
-    try {
-      // Simulate Network Delay
-      await Future.delayed(const Duration(seconds: 1));
-
-      // Check for disposal AFTER the await
-      if (_isDisposed) return;
-
-      // Dummy Live Match Data
-      _liveMatch = MatchModel(
-        id: 'live_001',
-        team1: 'Royal Strikers',
-        team2: 'Gully Kings',
-        winnerTeamId: '', // Ongoing
-        resultDescription: '1st Innings in progress',
-        matchDate: DateTime.now(),
-        scoresSummary: '142/3 (14.2)',
-        location: 'Central Park Ground',
-      );
-
-      // Dummy Player Data
-      _topPerformer = PlayerModel(
-        id: 'p_001',
-        name: 'Virat Kumar',
-        role: 'Batsman',
-        imageUrl: '', // Add a valid URL or handle empty in UI
-        stats: {
-          'Runs': '450',
-          'Avg': '56.2',
-          'SR': '145',
-        },
-      );
-    } catch (e) {
-      debugPrint("Error loading dashboard data: $e");
-    } finally {
-      // Final check before updating UI
-      if (!_isDisposed) {
-        _isLoading = false;
-        notifyListeners();
-      }
-    }
   }
 }

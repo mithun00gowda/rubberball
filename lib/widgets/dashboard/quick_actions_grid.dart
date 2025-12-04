@@ -1,75 +1,40 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:rubberball/providers/dashboard_provider.dart';
 import 'package:rubberball/screens/score_update_screen.dart';
+import 'package:rubberball/screens/match_screen.dart'; // Import History Screen
 import '../../screens/innerscreen/create_match_setup_screen.dart';
 import '../../screens/innerscreen/scanner_join_screen.dart';
 
 class QuickActionsGrid extends StatelessWidget {
   const QuickActionsGrid({super.key});
 
-  // Function to show options when "New Match" is clicked
   void _showMatchOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      isScrollControlled: true, // Allows sheet to resize with keyboard or content
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) {
         return Container(
           padding: const EdgeInsets.all(24),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                "Start Playing",
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).primaryColor,
-                ),
-              ),
+              const Text("Start Playing", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 20),
-              // Option 1: Host
               ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.add_circle, color: Colors.blue),
-                ),
-                title: const Text("Host a Match", style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: const Text("Create a lobby and generate QR code"),
+                leading: const Icon(Icons.add_circle, color: Colors.blue),
+                title: const Text("Host a Match"),
                 onTap: () {
-                  Navigator.pop(ctx); // Close sheet
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const CreateMatchSetupScreen()),
-                  );
+                  Navigator.pop(ctx);
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => const CreateMatchSetupScreen()));
                 },
               ),
-              const Divider(),
-              // Option 2: Join
               ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.qr_code_scanner, color: Colors.orange),
-                ),
-                title: const Text("Join Match", style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: const Text("Scan Host's QR code to join a team"),
+                leading: const Icon(Icons.qr_code, color: Colors.orange),
+                title: const Text("Join Match"),
                 onTap: () {
-                  Navigator.pop(ctx); // Close sheet
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const JoinMatchQRScanner()),
-                  );
+                  Navigator.pop(ctx);
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => const JoinMatchQRScanner()));
                 },
               ),
             ],
@@ -79,25 +44,22 @@ class QuickActionsGrid extends StatelessWidget {
     );
   }
 
+  void _handleLiveScoringTap(BuildContext context) {
+    final provider = Provider.of<DashboardProvider>(context, listen: false);
+    final match = provider.liveMatch;
+
+    if (match != null) {
+      Navigator.push(context, MaterialPageRoute(builder: (context) => ScoreUpdateScreen(matchId: match.matchId)));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No live match found."), duration: Duration(seconds: 2)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // --- Dynamic Aspect Ratio Logic ---
-    // 1. Get total screen width
     var screenWidth = MediaQuery.of(context).size.width;
-
-    // 2. Account for padding (16px left + 16px right + 12px crossAxisSpacing)
-    // Adjust this based on your actual parent padding. Assuming standard 16.
     var availableWidth = screenWidth - (16 * 2) - 12;
-
-    // 3. Calculate width of a single item
-    var itemWidth = availableWidth / 2;
-
-    // 4. Define the fixed height we NEED for the content (Icon + Text + Padding)
-    // 110px is usually safe for this card design
-    var requiredHeight = 110.0;
-
-    // 5. Calculate ratio: width / height
-    var dynamicAspectRatio = itemWidth / requiredHeight;
+    var dynamicAspectRatio = (availableWidth / 2) / 110.0;
 
     return GridView.count(
       crossAxisCount: 2,
@@ -105,94 +67,36 @@ class QuickActionsGrid extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
-      childAspectRatio: dynamicAspectRatio, // Use the calculated ratio
+      childAspectRatio: dynamicAspectRatio,
       children: [
-        _buildActionCard(
-          context,
-          title: "New Match",
-          icon: Icons.sports_cricket,
-          color: Theme.of(context).primaryColor,
-          isPrimary: true,
-          onTap: () => _showMatchOptions(context),
-        ),
-        _buildActionCard(
-          context,
-          title: "Live Scoring",
-          icon: Icons.scoreboard,
-          color: Colors.redAccent,
-          onTap: () {
-            // Navigator.push(
-            //   context,
-            //   // MaterialPageRoute(builder: (context) => const ScoreUpdateScreen(matchId: matchId)),
-            // );
-          },
-        ),
-        _buildActionCard(
-          context,
-          title: "Tournaments",
-          icon: Icons.emoji_events_outlined,
-          color: Colors.purple.shade700,
-          onTap: () {},
-        ),
-        _buildActionCard(
-          context,
-          title: "Statistics",
-          icon: Icons.bar_chart,
-          color: Colors.blue.shade700,
-          onTap: () {},
-        ),
+        _buildActionCard(context, title: "New Match", icon: Icons.sports_cricket, color: Theme.of(context).primaryColor, isPrimary: true, onTap: () => _showMatchOptions(context)),
+        _buildActionCard(context, title: "Live Scoring", icon: Icons.scoreboard, color: Colors.redAccent, onTap: () => _handleLiveScoringTap(context)),
+        _buildActionCard(context, title: "Tournaments", icon: Icons.emoji_events_outlined, color: Colors.purple.shade700, onTap: () {}),
+
+        // Linked History
+        _buildActionCard(context, title: "History", icon: Icons.history, color: Colors.blue.shade700, onTap: () {
+          Navigator.push(context, MaterialPageRoute(builder: (context) => const MatchScreen()));
+        }),
       ],
     );
   }
 
-  Widget _buildActionCard(BuildContext context,
-      {required String title,
-        required IconData icon,
-        required Color color,
-        required VoidCallback onTap,
-        bool isPrimary = false}) {
+  Widget _buildActionCard(BuildContext context, {required String title, required IconData icon, required Color color, required VoidCallback onTap, bool isPrimary = false}) {
     return Card(
       elevation: 0,
       color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: isPrimary ? color : Colors.grey.shade200,
-          width: isPrimary ? 2 : 1,
-        ),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: isPrimary ? color : Colors.grey.shade200)),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+          padding: const EdgeInsets.all(16.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, color: color, size: 24),
-              ),
-              const Spacer(),
-              // Use Flexible to handle long text on small screens
-              Flexible(
-                child: Text(
-                  title,
-                  maxLines: 2, // Allow 2 lines if needed
-                  overflow: TextOverflow.ellipsis, // Add dots if still too long
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                    color: Colors.grey.shade800,
-                    height: 1.1, // Tighter line height prevents overflow
-                  ),
-                ),
-              ),
+              Icon(icon, color: color, size: 24),
+              const SizedBox(height: 8),
+              Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
             ],
           ),
         ),

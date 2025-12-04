@@ -41,6 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await auth.signInWithGoogle();
     } catch (e) {
       if (!mounted) return;
+      print(e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(e.toString().replaceAll("Exception: ", "")),

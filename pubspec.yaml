@@ -45,6 +45,7 @@ dependencies:
   firebase_storage:
   qr_flutter:
   mobile_scanner:
+  intl:
 
 dev_dependencies:
   flutter_test:

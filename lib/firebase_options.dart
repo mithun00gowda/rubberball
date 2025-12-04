@@ -63,7 +63,9 @@ class DefaultFirebaseOptions {
     messagingSenderId: '142783030266',
     projectId: 'rubberball-app',
     storageBucket: 'rubberball-app.firebasestorage.app',
+    androidClientId: '142783030266-m9ko172qsg3n8uet1jm9shfuo6n13l2e.apps.googleusercontent.com',
     iosClientId: '142783030266-bglee81gerhsb5hf3frqd1am4tuj1ld6.apps.googleusercontent.com',
     iosBundleId: 'com.mihtunapps.rubberball',
   );
+
 }

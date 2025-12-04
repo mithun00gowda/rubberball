@@ -12,11 +12,12 @@ class MatchLobbyModel {
   final DateTime createdAt;
 
   // --- Toss Details ---
-  final String? tossWinnerTeam; // 'A' or 'B'
-  final String? tossDecision;   // 'BAT' or 'BOWL'
+  final String? tossWinnerTeam;
+  final String? tossDecision;
 
   // --- Rules ---
-  final String matchType;
+  final String matchType; // 'LIMITED_OVERS', 'BOX_CRICKET'
+  final bool isSingleWicketMode; // NEW: Determines if non-strikers exist
   final int totalOvers;
   final int teamSize;
   final int ballsPerOver;
@@ -40,6 +41,7 @@ class MatchLobbyModel {
     this.tossWinnerTeam,
     this.tossDecision,
     this.matchType = 'LIMITED_OVERS',
+    this.isSingleWicketMode = false, // Default Standard
     required this.totalOvers,
     this.teamSize = 11,
     this.ballsPerOver = 6,
@@ -65,6 +67,7 @@ class MatchLobbyModel {
       'tossWinnerTeam': tossWinnerTeam,
       'tossDecision': tossDecision,
       'matchType': matchType,
+      'isSingleWicketMode': isSingleWicketMode,
       'totalOvers': totalOvers,
       'teamSize': teamSize,
       'ballsPerOver': ballsPerOver,
@@ -91,6 +94,7 @@ class MatchLobbyModel {
       tossWinnerTeam: map['tossWinnerTeam'],
       tossDecision: map['tossDecision'],
       matchType: map['matchType'] ?? 'LIMITED_OVERS',
+      isSingleWicketMode: map['isSingleWicketMode'] ?? false,
       totalOvers: map['totalOvers'] ?? 10,
       teamSize: map['teamSize'] ?? 11,
       ballsPerOver: map['ballsPerOver'] ?? 6,

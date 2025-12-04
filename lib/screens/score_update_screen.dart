@@ -5,7 +5,6 @@ import 'package:rubberball/models/match_lobby_model.dart';
 import 'package:rubberball/providers/scoring_provider.dart';
 
 class ScoreUpdateScreen extends StatefulWidget {
-  // Pass matchId or object. Passing ID is safer for deep linking/reloads.
   final String matchId;
 
   const ScoreUpdateScreen({super.key, required this.matchId});
@@ -18,7 +17,6 @@ class _ScoreUpdateScreenState extends State<ScoreUpdateScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize provider with the specific match ID
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Provider.of<ScoringProvider>(context, listen: false).init(widget.matchId);
     });
@@ -79,38 +77,62 @@ class _ScoreUpdateScreenState extends State<ScoreUpdateScreen> {
           }
 
           final match = provider.matchData!;
+
+          // --- HANDLE MATCH COMPLETED STATE (The Loop Hub) ---
+          if (match.status == 'COMPLETED') {
+            return _MatchFinishedView(match: match, provider: provider);
+          }
+
+          // --- HANDLE SESSION ENDED STATE (Final Screen) ---
+          if (match.status == 'SESSION_ENDED') {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.check_circle, size: 60, color: Colors.green),
+                  const SizedBox(height: 16),
+                  const Text("Session Ended", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
+                    child: const Text("Back to Dashboard"),
+                  ),
+                ],
+              ),
+            );
+          }
+
           final score = provider.score;
           final canUpdate = provider.canScore;
+          final currentMaxOvers = provider.currentMaxOvers;
 
           return Column(
             children: [
               // 1. Main Score Header
-              _ScoreboardHeader(match: match, score: score),
+              _ScoreboardHeader(
+                match: match,
+                score: score,
+                maxOvers: currentMaxOvers,
+              ),
 
               // 2. Player Cards (Crease)
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.all(12),
                   children: [
+                    // Rule Indicators
                     if (match.isPlayerBasedOvers)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.orange.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.group_add, color: Colors.orange, size: 16),
-                            const SizedBox(width: 8),
-                            Text(
-                              "Dynamic Overs: ${match.oversPerPlayer} per player",
-                              style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12),
-                            ),
-                          ],
-                        ),
+                      _RuleInfoBanner(
+                        icon: Icons.group_add,
+                        text: "Dynamic Overs: ${match.oversPerPlayer} per player",
+                        color: Colors.orange,
+                      ),
+
+                    if (match.isSingleWicketMode)
+                      _RuleInfoBanner(
+                        icon: Icons.person,
+                        text: "Single Wicket Mode (1v1 / No Non-Striker)",
+                        color: Colors.blue,
                       ),
 
                     _CreaseSection(provider: provider),
@@ -118,7 +140,7 @@ class _ScoreUpdateScreenState extends State<ScoreUpdateScreen> {
                 ),
               ),
 
-              // 3. Controls (Bottom Sheet style)
+              // 3. Controls
               if (canUpdate)
                 const _ControlPanel()
               else
@@ -131,17 +153,151 @@ class _ScoreUpdateScreenState extends State<ScoreUpdateScreen> {
   }
 }
 
+// --- VIEW: MATCH FINISHED (Decision Hub) ---
+class _MatchFinishedView extends StatelessWidget {
+  final MatchLobbyModel match;
+  final ScoringProvider provider;
+
+  const _MatchFinishedView({required this.match, required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    // Check if user is Host/Captain to show controls
+    final canControl = provider.isAuthorized;
+
+    // Determine winner name safely
+    String winnerText = "Match Ended";
+    if (match.tossWinnerTeam != null) { // Note: 'winner' field might be stored differently in your model, accessing map safely
+      // This logic depends on where 'winner' is stored. Assuming provider updated 'winner' field in DB.
+      // For display, we can infer or fetch from provider if needed.
+      winnerText = "Waiting for decision...";
+    }
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.emoji_events, size: 80, color: Colors.amber),
+            const SizedBox(height: 24),
+            const Text(
+              "MATCH COMPLETED",
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "${match.teamAName} vs ${match.teamBName}",
+              style: const TextStyle(color: Colors.grey, fontSize: 16),
+            ),
+            const SizedBox(height: 48),
+
+            if (canControl) ...[
+              const Text("Captain's Decision for Next Match:", style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+
+              // LOOP OPTION: Start New Match (Winner Bats)
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.sports_cricket),
+                  label: const Text("START NEXT: WINNER BATS"),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                  onPressed: () => provider.startNextMatchInSession('BAT'),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // LOOP OPTION: Start New Match (Winner Bowls)
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.sports_baseball),
+                  label: const Text("START NEXT: WINNER BOWLS"),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white),
+                  onPressed: () => provider.startNextMatchInSession('BOWL'),
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // FINALIZE OPTION: End Series
+              OutlinedButton.icon(
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text("END SESSION & FINALIZE SERIES"),
+                onPressed: () => provider.endSession(),
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24)
+                ),
+              )
+            ] else ...[
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              const Text("Waiting for captain to start next match...", style: TextStyle(color: Colors.grey)),
+            ]
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RuleInfoBanner extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final MaterialColor color;
+
+  const _RuleInfoBanner({required this.icon, required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: color.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.shade200),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ScoreboardHeader extends StatelessWidget {
   final MatchLobbyModel match;
   final dynamic score;
+  final int maxOvers;
 
-  const _ScoreboardHeader({required this.match, required this.score});
+  const _ScoreboardHeader({required this.match, required this.score, required this.maxOvers});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final battingTeam = match.tossDecision == 'BAT' && match.tossWinnerTeam == 'A'
-        ? match.teamAName : match.teamBName;
+
+    // Determine Batting Team
+    final currentInnings = score.playerStats['currentInnings'] ?? 1;
+    bool teamABatsFirst = (match.tossWinnerTeam == 'A' && match.tossDecision == 'BAT') ||
+        (match.tossWinnerTeam == 'B' && match.tossDecision == 'BOWL');
+
+    bool teamABattingNow = (currentInnings == 1 && teamABatsFirst) || (currentInnings == 2 && !teamABatsFirst);
+    final battingTeamName = teamABattingNow ? match.teamAName : match.teamBName;
+
+    // Target Logic
+    final target = score.playerStats['target'] ?? 0;
+    final showTarget = currentInnings == 2 && target > 0;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
@@ -159,7 +315,7 @@ class _ScoreboardHeader extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    battingTeam.toUpperCase(),
+                    battingTeamName.toUpperCase(),
                     style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 14, letterSpacing: 1.0, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
@@ -189,7 +345,7 @@ class _ScoreboardHeader extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      match.isPlayerBasedOvers ? "DYNAMIC OVERS" : "TARGET: --",
+                      showTarget ? "TARGET: $target" : "1st INNINGS",
                       style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -199,7 +355,7 @@ class _ScoreboardHeader extends StatelessWidget {
                     style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w600),
                   ),
                   Text(
-                    "OVERS (${match.totalOvers})",
+                    "OVERS ($maxOvers)",
                     style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 10, letterSpacing: 1.0),
                   ),
                 ],
@@ -260,25 +416,31 @@ class _CreaseSection extends StatelessWidget {
     if (uid.isEmpty || uid == 'NONE') return <String, dynamic>{};
     final rawStats = provider.score.playerStats[uid];
     if (rawStats == null) return <String, dynamic>{};
-    // Ensure strict type casting
     return Map<String, dynamic>.from(rawStats);
   }
 
   void _showPlayerPicker(BuildContext context, String role) {
     final match = provider.matchData!;
+    final score = provider.score;
 
-    bool isTeamABatting = (match.tossWinnerTeam == 'A' && match.tossDecision == 'BAT') ||
+    // Determine Batting Team
+    final currentInnings = score.playerStats['currentInnings'] ?? 1;
+    bool teamABatsFirst = (match.tossWinnerTeam == 'A' && match.tossDecision == 'BAT') ||
         (match.tossWinnerTeam == 'B' && match.tossDecision == 'BOWL');
+    bool teamABattingNow = (currentInnings == 1 && teamABatsFirst) || (currentInnings == 2 && !teamABatsFirst);
 
     List<dynamic> targetList;
     String teamName;
 
+    // Filter players based on role and innings
     if (role == 'Bowler') {
-      targetList = isTeamABatting ? match.teamBPlayers : match.teamAPlayers;
-      teamName = isTeamABatting ? match.teamBName : match.teamAName;
+      // Bowling Team
+      targetList = teamABattingNow ? match.teamBPlayers : match.teamAPlayers;
+      teamName = teamABattingNow ? match.teamBName : match.teamAName;
     } else {
-      targetList = isTeamABatting ? match.teamAPlayers : match.teamBPlayers;
-      teamName = isTeamABatting ? match.teamAName : match.teamBName;
+      // Batting Team
+      targetList = teamABattingNow ? match.teamAPlayers : match.teamBPlayers;
+      teamName = teamABattingNow ? match.teamAName : match.teamBName;
     }
 
     showModalBottomSheet(
@@ -298,18 +460,17 @@ class _CreaseSection extends StatelessWidget {
                 padding: const EdgeInsets.all(16.0),
                 child: Text("Select $role ($teamName)", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
               ),
-              // Option for Single Wicket (No Non-Striker)
-              if (role == 'NonStriker')
+              if (role == 'NonStriker' && !match.isSingleWicketMode) ...[
                 ListTile(
                   leading: const CircleAvatar(backgroundColor: Colors.grey, child: Icon(Icons.person_off, color: Colors.white, size: 20)),
-                  title: const Text("Single Wicket / None"),
-                  subtitle: const Text("Play without a non-striker"),
+                  title: const Text("None / Retired"),
                   onTap: () {
                     provider.setNonStriker('NONE');
                     Navigator.pop(context);
                   },
                 ),
-              if (role == 'NonStriker') const Divider(),
+                const Divider(),
+              ],
               Expanded(
                 child: _buildPlayerList(context, targetList, role),
               ),
@@ -348,6 +509,7 @@ class _CreaseSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final score = provider.score;
     final canEdit = provider.canScore;
+    final match = provider.matchData!;
 
     final striker = _getPlayer(score.strikerId);
     final bowler = _getPlayer(score.bowlerId);
@@ -355,12 +517,13 @@ class _CreaseSection extends StatelessWidget {
     final sStats = _getStats(score.strikerId);
     final bStats = _getStats(score.bowlerId);
 
-    // Check if Single Wicket
-    final isSingleWicket = score.nonStrikerId == 'NONE';
-    final nonStriker = isSingleWicket ? null : _getPlayer(score.nonStrikerId);
+    // Strict Single Wicket Logic
+    final isSingleWicketRule = match.isSingleWicketMode;
+    final isSingleWicketState = score.nonStrikerId == 'NONE';
+    final hideNonStriker = isSingleWicketRule || isSingleWicketState;
 
-    // Explicitly type the empty map for non-striker stats
-    final nsStats = isSingleWicket ? <String, dynamic>{} : _getStats(score.nonStrikerId);
+    final nonStriker = hideNonStriker ? null : _getPlayer(score.nonStrikerId);
+    final nsStats = hideNonStriker ? <String, dynamic>{} : _getStats(score.nonStrikerId);
 
     double _calcSR(int r, int b) => b == 0 ? 0.0 : (r / b) * 100;
 
@@ -371,6 +534,7 @@ class _CreaseSection extends StatelessWidget {
           padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
           child: Text("BATTING", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 12)),
         ),
+
         _DetailedPlayerCard(
           player: striker,
           role: "Striker",
@@ -380,36 +544,38 @@ class _CreaseSection extends StatelessWidget {
           onTap: canEdit ? () => _showPlayerPicker(context, 'Striker') : null,
         ),
         const SizedBox(height: 8),
-        if (isSingleWicket)
-          InkWell(
-            onTap: canEdit ? () => _showPlayerPicker(context, 'NonStriker') : null,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
+
+        if (!isSingleWicketRule)
+          if (hideNonStriker)
+            InkWell(
+              onTap: canEdit ? () => _showPlayerPicker(context, 'NonStriker') : null,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person_off, color: Colors.grey),
+                    const SizedBox(width: 16),
+                    Text("Non-Striker: None", style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    if (canEdit) const Icon(Icons.edit, size: 16, color: Colors.grey),
+                  ],
+                ),
               ),
-              child: Row(
-                children: [
-                  const Icon(Icons.person_off, color: Colors.grey),
-                  const SizedBox(width: 16),
-                  Text("Single Wicket Mode", style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.bold)),
-                  const Spacer(),
-                  if (canEdit) const Icon(Icons.edit, size: 16, color: Colors.grey),
-                ],
-              ),
+            )
+          else
+            _DetailedPlayerCard(
+              player: nonStriker,
+              role: "Non-Striker",
+              isOnStrike: false,
+              stats: nsStats,
+              strikeRate: _calcSR(nsStats['runs'] ?? 0, nsStats['balls'] ?? 0),
+              onTap: canEdit ? () => _showPlayerPicker(context, 'NonStriker') : null,
             ),
-          )
-        else
-          _DetailedPlayerCard(
-            player: nonStriker,
-            role: "Non-Striker",
-            isOnStrike: false,
-            stats: nsStats,
-            strikeRate: _calcSR(nsStats['runs'] ?? 0, nsStats['balls'] ?? 0),
-            onTap: canEdit ? () => _showPlayerPicker(context, 'NonStriker') : null,
-          ),
 
         const SizedBox(height: 16),
         const Padding(
@@ -564,6 +730,32 @@ class _DetailedBowlerCard extends StatelessWidget {
 class _ControlPanel extends StatelessWidget {
   const _ControlPanel();
 
+  void _safeScoreAction(BuildContext context, VoidCallback action) {
+    final provider = context.read<ScoringProvider>();
+    final score = provider.score;
+    final match = provider.matchData!;
+
+    bool isStrikerSet = score.strikerId.isNotEmpty;
+    bool isBowlerSet = score.bowlerId.isNotEmpty;
+
+    // Check non-striker unless it's Single Wicket mode or manually set to NONE
+    bool isNonStrikerRequired = !match.isSingleWicketMode && score.nonStrikerId != 'NONE';
+    bool isNonStrikerSet = !isNonStrikerRequired || score.nonStrikerId.isNotEmpty;
+
+    if (!isStrikerSet || !isBowlerSet || !isNonStrikerSet) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please select Striker, Non-Striker (if applicable), and Bowler first!"),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Valid
+    action();
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.read<ScoringProvider>();
@@ -578,25 +770,25 @@ class _ControlPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              _ScoreBtn("0", () => provider.addRun(0)),
+              _ScoreBtn("0", () => _safeScoreAction(context, () => provider.addRun(0))),
               const SizedBox(width: 8),
-              _ScoreBtn("1", () => provider.addRun(1)),
+              _ScoreBtn("1", () => _safeScoreAction(context, () => provider.addRun(1))),
               const SizedBox(width: 8),
-              _ScoreBtn("2", () => provider.addRun(2)),
+              _ScoreBtn("2", () => _safeScoreAction(context, () => provider.addRun(2))),
               const SizedBox(width: 8),
-              _ScoreBtn("3", () => provider.addRun(3)),
+              _ScoreBtn("3", () => _safeScoreAction(context, () => provider.addRun(3))),
             ],
           ),
           const SizedBox(height: 8),
           Row(
             children: [
-              _ScoreBtn("4", () => provider.addRun(4), color: Colors.purple.shade50, textColor: Colors.purple),
+              _ScoreBtn("4", () => _safeScoreAction(context, () => provider.addRun(4)), color: Colors.purple.shade50, textColor: Colors.purple),
               const SizedBox(width: 8),
-              _ScoreBtn("6", () => provider.addRun(6), color: Colors.purple.shade50, textColor: Colors.purple),
+              _ScoreBtn("6", () => _safeScoreAction(context, () => provider.addRun(6)), color: Colors.purple.shade50, textColor: Colors.purple),
               const SizedBox(width: 8),
-              _ScoreBtn("WD", () => provider.addExtra("WD"), color: Colors.orange.shade50, textColor: Colors.orange, fontSize: 14),
+              _ScoreBtn("WD", () => _safeScoreAction(context, () => provider.addExtra("WD")), color: Colors.orange.shade50, textColor: Colors.orange, fontSize: 14),
               const SizedBox(width: 8),
-              _ScoreBtn("NB", () => provider.addExtra("NB"), color: Colors.orange.shade50, textColor: Colors.orange, fontSize: 14),
+              _ScoreBtn("NB", () => _safeScoreAction(context, () => provider.addExtra("NB")), color: Colors.orange.shade50, textColor: Colors.orange, fontSize: 14),
             ],
           ),
           const SizedBox(height: 8),
@@ -607,7 +799,7 @@ class _ControlPanel extends StatelessWidget {
                   "WICKET",
                   Colors.redAccent,
                   Colors.white,
-                      () => provider.recordWicket("Out"),
+                      () => _safeScoreAction(context, () => provider.recordWicket("Out")),
                 ),
               ),
               const SizedBox(width: 8),

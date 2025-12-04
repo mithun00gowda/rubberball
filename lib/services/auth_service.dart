@@ -134,6 +134,7 @@ class AuthService with ChangeNotifier {
 
   // --- Google Sign In ---
   Future<bool> signInWithGoogle() async {
+    initSignIn();
     try {
       _isLoading = true;
       notifyListeners();
@@ -143,6 +144,7 @@ class AuthService with ChangeNotifier {
       final idToken = googleUser.authentication.idToken;
       final authenticationClient = googleUser.authorizationClient;
       GoogleSignInClientAuthorization? authorization = await authenticationClient.authorizationForScopes(['email','profile']);
+
       final accessToken = authorization?.accessToken;
       if(accessToken == null){
         final authorization2 = await authenticationClient.authorizationForScopes(['email','profile']);
@@ -152,12 +154,7 @@ class AuthService with ChangeNotifier {
         }
         authorization = authorization2;
       }
-
-      // 2. Obtain auth details
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
-      // 3. Create credential
-      final AuthCredential credential = GoogleAuthProvider.credential(
+      final credential = GoogleAuthProvider.credential(
           idToken: idToken,
           accessToken: accessToken
       );
@@ -184,6 +181,7 @@ class AuthService with ChangeNotifier {
     } catch (e) {
       _isLoading = false;
       notifyListeners();
+      print(e);
       throw Exception("Google Sign In failed: $e");
     }
   }
