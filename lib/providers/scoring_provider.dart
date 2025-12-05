@@ -16,7 +16,6 @@ class ScoringProvider with ChangeNotifier {
   MatchScoreModel get score => _scoreData;
   bool get isLoading => _matchData == null;
 
-  // --- Role Helpers ---
   bool get isCaptainA => _matchData?.captainAId == _auth.currentUser?.uid;
   bool get isCaptainB => _matchData?.captainBId == _auth.currentUser?.uid;
   bool get isHost => _matchData?.hostId == _auth.currentUser?.uid;
@@ -31,25 +30,28 @@ class ScoringProvider with ChangeNotifier {
 
   void _listenToMatch() {
     if (_matchId == null) return;
-
     _db.collection('matches').doc(_matchId).snapshots().listen((snapshot) {
       if (snapshot.exists) {
         _matchData = MatchLobbyModel.fromMap(snapshot.data()!);
-
         if (snapshot.data()!.containsKey('score')) {
           _scoreData = MatchScoreModel.fromMap(snapshot.data()!['score']);
         }
 
+        // Auto-Exit Logic (1 Hour Inactivity)
+        if (_matchData!.status != 'SESSION_ENDED' && _matchData!.status != 'COMPLETED') {
+          final lastActive = _matchData!.lastActivityTime;
+          if (DateTime.now().difference(lastActive).inHours >= 1) {
+            if (isAuthorized) endSession();
+          }
+        }
         notifyListeners();
       }
     });
   }
 
-  // --- Helper: Dynamic Max Overs ---
   int get currentMaxOvers {
     if (_matchData == null) return 0;
     int currentInnings = 1;
-    // Read innings from map to be safe
     if (_scoreData.playerStats.containsKey('currentInnings')) {
       currentInnings = _scoreData.playerStats['currentInnings'] is int ? _scoreData.playerStats['currentInnings'] : 1;
     }
@@ -62,22 +64,14 @@ class ScoringProvider with ChangeNotifier {
     bool teamABatsFirst = (match.tossWinnerTeam == 'A' && match.tossDecision == 'BAT') ||
         (match.tossWinnerTeam == 'B' && match.tossDecision == 'BOWL');
 
-    // Determine who is Batting NOW
-    bool teamABatsNow = (currentInnings == 1 && teamABatsFirst) || (currentInnings == 2 && !teamABatsFirst);
+    bool teamABowls = (currentInnings == 1 && !teamABatsFirst) || (currentInnings == 2 && teamABatsFirst);
 
-    // FIXED LOGIC:
-    // In "Player Based" rules (everyone bats 1 over), the Total Overs is defined by the number of BATSMEN.
-    // If Team A is batting and has 3 players, they get 3 overs.
-    // If Team B is batting and has 2 players, they get 2 overs.
-
-    int playerCountForOvers = teamABatsNow ? match.teamAPlayers.length : match.teamBPlayers.length;
-
-    // Fallback to 1 if empty to avoid 0 overs
-    return (playerCountForOvers == 0 ? 1 : playerCountForOvers) * match.oversPerPlayer;
+    // Use BATTING team count for overs calculation
+    int batterCount = teamABowls ? match.teamAPlayers.length : match.teamBPlayers.length;
+    return (batterCount == 0 ? 1 : batterCount) * match.oversPerPlayer;
   }
 
-  // --- Scoring Actions ---
-
+  // --- Actions ---
   Future<void> addRun(int runs) async {
     if (!canScore || _matchId == null) return;
     await _updateScoreTransaction(runs: runs, isExtra: false, isWicket: false);
@@ -104,7 +98,7 @@ class ScoringProvider with ChangeNotifier {
       final scoreMap = data['score'] as Map<String, dynamic>;
       if (scoreMap.containsKey('lastState') && scoreMap['lastState'] != null) {
         Map<String, dynamic> previousState = Map<String, dynamic>.from(scoreMap['lastState']);
-        transaction.update(docRef, {'score': previousState});
+        transaction.update(docRef, {'score': previousState, 'lastActivityTime': FieldValue.serverTimestamp()});
       }
     });
   }
@@ -150,8 +144,7 @@ class ScoringProvider with ChangeNotifier {
 
       // 2. Ball Counting
       bool isLegal = !isExtra;
-      if (isExtra && !matchLobby.rebowlWideNoBall) isLegal = true; // Gully rule override
-
+      if (isExtra && !matchLobby.rebowlWideNoBall) isLegal = true;
       int ballsPerOver = data['ballsPerOver'] ?? 6;
 
       if (isLegal) {
@@ -163,7 +156,7 @@ class ScoringProvider with ChangeNotifier {
         }
       }
 
-      // Wicket Ends Over Logic (for Player Based Mode)
+      // Wicket Ends Over Logic (Player Based)
       if (matchLobby.isPlayerBasedOvers && isWicket) {
         if (newBalls > 0) {
           newBalls = 0;
@@ -172,7 +165,7 @@ class ScoringProvider with ChangeNotifier {
         }
       }
 
-      // 3. Update Stats
+      // 3. Update Individual Stats
       if (currentScore.strikerId.isNotEmpty && currentScore.strikerId != 'NONE' && !isExtra) {
         final pid = currentScore.strikerId;
         final pStat = Map<String, dynamic>.from(stats[pid] ?? {});
@@ -194,7 +187,7 @@ class ScoringProvider with ChangeNotifier {
         stats[bid] = bStat;
       }
 
-      // 4. End Conditions (Using the fixed calculation)
+      // 4. End Conditions
       int maxOversForInnings = _calculateMaxOvers(matchLobby, currentInnings);
 
       bool teamABatsFirst = (matchLobby.tossWinnerTeam == 'A' && matchLobby.tossDecision == 'BAT') ||
@@ -206,7 +199,6 @@ class ScoringProvider with ChangeNotifier {
 
       int wicketLimit;
       if (isSingleWicketMode || matchLobby.isPlayerBasedOvers) {
-        // In player based, wickets = players
         wicketLimit = battingTeamCount;
       } else {
         wicketLimit = battingTeamCount - 1;
@@ -218,6 +210,7 @@ class ScoringProvider with ChangeNotifier {
       bool isChased = currentInnings == 2 && target > 0 && newRuns >= target;
 
       Map<String, dynamic> updates = {};
+      updates['lastActivityTime'] = FieldValue.serverTimestamp();
 
       if (isChased || (currentInnings == 2 && (isAllOut || isOversDone))) {
         // --- MATCH ENDED ---
@@ -236,9 +229,12 @@ class ScoringProvider with ChangeNotifier {
         seriesStats['total'] = (seriesStats['total'] ?? 0) + 1;
         updates['seriesStats'] = seriesStats;
 
+        // --- FIXED: Profile Updates with Safety Check ---
         final allPlayers = [...matchLobby.teamAPlayers, ...matchLobby.teamBPlayers];
         for (var player in allPlayers) {
-          if (player.uid.isEmpty) continue;
+          // CRITICAL FIX: Skip guests (who don't have user IDs) to prevent transaction crash
+          if (player.uid.isEmpty || player.uid.startsWith('guest_')) continue;
+
           int pRuns = 0, pWickets = 0;
           if (stats.containsKey(player.uid)) {
             final pData = stats[player.uid];
@@ -247,12 +243,13 @@ class ScoringProvider with ChangeNotifier {
               pWickets = pData['wickets'] ?? 0;
             }
           }
-          transaction.update(_db.collection('users').doc(player.uid), {
+          // Use 'set' with merge to prevent crash if user document is missing
+          transaction.set(_db.collection('users').doc(player.uid), {
             'matchesPlayed': FieldValue.increment(1),
             'totalRuns': FieldValue.increment(pRuns),
             'wicketsTaken': FieldValue.increment(pWickets),
             'lastPlayedAt': FieldValue.serverTimestamp(),
-          });
+          }, SetOptions(merge: true));
         }
 
         stats['currentInnings'] = 2;
@@ -266,7 +263,7 @@ class ScoringProvider with ChangeNotifier {
         };
 
       } else if (currentInnings == 1 && (isAllOut || isOversDone)) {
-        // --- INNINGS SWAP ---
+        // INNINGS SWAP
         stats['currentInnings'] = 2;
         stats['target'] = newRuns + 1;
         stats['innings1Summary'] = '$newRuns/$newWickets';
@@ -281,10 +278,9 @@ class ScoringProvider with ChangeNotifier {
           'lastState': previousState,
         };
       } else {
-        // --- CONTINUE ---
+        // CONTINUE
         String nextStriker = currentScore.strikerId;
         String nextNonStriker = currentScore.nonStrikerId;
-
         if (isWicket) nextStriker = '';
 
         bool canSwap = nextNonStriker.isNotEmpty && nextNonStriker != 'NONE' && nextStriker.isNotEmpty;
@@ -312,13 +308,13 @@ class ScoringProvider with ChangeNotifier {
     });
   }
 
-  // --- Session Management ---
-
+  // ... (Keep Session Management and Player Setters as is) ...
   Future<void> setSingleWicketMode(bool enable) async {
     if (!isAuthorized || _matchId == null) return;
     await _db.collection('matches').doc(_matchId).update({
       'isSingleWicketMode': enable,
       'score.nonStrikerId': enable ? 'NONE' : '',
+      'lastActivityTime': FieldValue.serverTimestamp(),
     });
   }
 
@@ -326,17 +322,27 @@ class ScoringProvider with ChangeNotifier {
     if (_matchId == null || !isAuthorized) return;
     final docRef = _db.collection('matches').doc(_matchId);
     final doc = await docRef.get();
-
     final winner = doc.data()?['winner'] ?? 'A';
     final isSingleWicket = doc.data()?['isSingleWicketMode'] ?? false;
-
     WriteBatch batch = _db.batch();
     final historyRef = docRef.collection('history').doc();
-    batch.set(historyRef, {
+
+    final historyData = {
       'score': doc.data()?['score'],
       'winner': winner,
       'matchNumber': (doc.data()?['seriesStats']?['total'] ?? 0),
       'timestamp': FieldValue.serverTimestamp(),
+      'teamAPlayers': doc.data()?['teamAPlayers'],
+      'teamBPlayers': doc.data()?['teamBPlayers'],
+      'teamAName': doc.data()?['teamAName'],
+      'teamBName': doc.data()?['teamBName'],
+    };
+    batch.set(historyRef, historyData);
+
+    final rootHistoryRef = _db.collection('match_history').doc();
+    batch.set(rootHistoryRef, {
+      ...historyData,
+      'lobbyId': _matchId,
     });
 
     batch.update(docRef, {
@@ -344,6 +350,7 @@ class ScoringProvider with ChangeNotifier {
       'tossWinnerTeam': winner == 'DRAW' ? 'A' : winner,
       'tossDecision': decision,
       'winner': FieldValue.delete(),
+      'lastActivityTime': FieldValue.serverTimestamp(),
       'score': {
         'runs': 0, 'wickets': 0, 'overs': 0, 'balls': 0,
         'strikerId': '', 'nonStrikerId': isSingleWicket ? 'NONE' : '', 'bowlerId': '',
@@ -356,16 +363,37 @@ class ScoringProvider with ChangeNotifier {
 
   Future<void> endSession() async {
     if (_matchId == null || !isAuthorized) return;
-    await _db.collection('matches').doc(_matchId).update({'status': 'SESSION_ENDED'});
+    final docRef = _db.collection('matches').doc(_matchId);
+    final doc = await docRef.get();
+    final data = doc.data()!;
+
+    if (data['status'] == 'COMPLETED') {
+      await _db.collection('match_history').add({
+        'score': data['score'],
+        'winner': data['winner'],
+        'matchNumber': (data['seriesStats']?['total'] ?? 0),
+        'timestamp': FieldValue.serverTimestamp(),
+        'teamAPlayers': data['teamAPlayers'],
+        'teamBPlayers': data['teamBPlayers'],
+        'teamAName': data['teamAName'],
+        'teamBName': data['teamBName'],
+        'lobbyId': _matchId,
+      });
+    }
+
+    await docRef.update({
+      'status': 'SESSION_ENDED',
+      'lastActivityTime': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> setStriker(String uid) async {
-    if(isAuthorized) await _db.collection('matches').doc(_matchId).update({'score.strikerId': uid});
+    if(isAuthorized) await _db.collection('matches').doc(_matchId).update({'score.strikerId': uid, 'lastActivityTime': FieldValue.serverTimestamp()});
   }
   Future<void> setNonStriker(String uid) async {
-    if(isAuthorized) await _db.collection('matches').doc(_matchId).update({'score.nonStrikerId': uid});
+    if(isAuthorized) await _db.collection('matches').doc(_matchId).update({'score.nonStrikerId': uid, 'lastActivityTime': FieldValue.serverTimestamp()});
   }
   Future<void> setBowler(String uid) async {
-    if(isAuthorized) await _db.collection('matches').doc(_matchId).update({'score.bowlerId': uid});
+    if(isAuthorized) await _db.collection('matches').doc(_matchId).update({'score.bowlerId': uid, 'lastActivityTime': FieldValue.serverTimestamp()});
   }
 }

@@ -1,8 +1,10 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class MatchLobbyModel {
   final String matchId;
   final String hostId;
   final String location;
-  final String status; // 'LOBBY', 'TOSS', 'LIVE', 'COMPLETED'
+  final String status;
   final String teamAName;
   final String teamBName;
   final List<LobbyPlayer> teamAPlayers;
@@ -11,13 +13,16 @@ class MatchLobbyModel {
   final String? captainBId;
   final DateTime createdAt;
 
-  // --- Toss & Result ---
+  // --- New Field ---
+  final DateTime lastActivityTime; // Tracks idleness
+
+  // --- Toss Details ---
   final String? tossWinnerTeam;
   final String? tossDecision;
-  final String? winner; // NEW: Added winner field
+  final String? winner;
 
   // --- Rules ---
-  final String matchType; // 'LIMITED_OVERS', 'BOX_CRICKET'
+  final String matchType;
   final bool isSingleWicketMode;
   final int totalOvers;
   final int teamSize;
@@ -39,9 +44,10 @@ class MatchLobbyModel {
     this.captainAId,
     this.captainBId,
     required this.createdAt,
+    required this.lastActivityTime, // Required
     this.tossWinnerTeam,
     this.tossDecision,
-    this.winner, // Add to constructor
+    this.winner,
     this.matchType = 'LIMITED_OVERS',
     this.isSingleWicketMode = false,
     required this.totalOvers,
@@ -65,10 +71,11 @@ class MatchLobbyModel {
       'teamBPlayers': teamBPlayers.map((p) => p.toMap()).toList(),
       'captainAId': captainAId,
       'captainBId': captainBId,
-      'createdAt': createdAt.toIso8601String(),
+      'createdAt': createdAt, // Firestore handles DateTime automatically usually, or convert to ISO
+      'lastActivityTime': lastActivityTime, // Save this
       'tossWinnerTeam': tossWinnerTeam,
       'tossDecision': tossDecision,
-      'winner': winner, // Save to DB
+      'winner': winner,
       'matchType': matchType,
       'isSingleWicketMode': isSingleWicketMode,
       'totalOvers': totalOvers,
@@ -82,6 +89,13 @@ class MatchLobbyModel {
   }
 
   factory MatchLobbyModel.fromMap(Map<String, dynamic> map) {
+    // Helper to parse timestamps
+    DateTime parseTime(dynamic val) {
+      if (val is Timestamp) return val.toDate();
+      if (val is String) return DateTime.tryParse(val) ?? DateTime.now();
+      return DateTime.now();
+    }
+
     return MatchLobbyModel(
       matchId: map['matchId'] ?? '',
       hostId: map['hostId'] ?? '',
@@ -93,10 +107,11 @@ class MatchLobbyModel {
       teamBPlayers: (map['teamBPlayers'] as List<dynamic>? ?? []).map((e) => LobbyPlayer.fromMap(e)).toList(),
       captainAId: map['captainAId'],
       captainBId: map['captainBId'],
-      createdAt: DateTime.parse(map['createdAt'] ?? DateTime.now().toIso8601String()),
+      createdAt: parseTime(map['createdAt']),
+      lastActivityTime: parseTime(map['lastActivityTime']), // Load this
       tossWinnerTeam: map['tossWinnerTeam'],
       tossDecision: map['tossDecision'],
-      winner: map['winner'], // Read from DB
+      winner: map['winner'],
       matchType: map['matchType'] ?? 'LIMITED_OVERS',
       isSingleWicketMode: map['isSingleWicketMode'] ?? false,
       totalOvers: map['totalOvers'] ?? 10,

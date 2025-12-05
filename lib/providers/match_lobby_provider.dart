@@ -26,6 +26,7 @@ class MatchLobbyProvider with ChangeNotifier {
     if (user == null) throw Exception("User not logged in");
 
     final matchId = const Uuid().v4();
+    final now = DateTime.now();
 
     final hostPlayer = LobbyPlayer(
         uid: user.uid,
@@ -39,7 +40,8 @@ class MatchLobbyProvider with ChangeNotifier {
       matchId: matchId,
       hostId: user.uid,
       location: location,
-      createdAt: DateTime.now(),
+      createdAt: now,
+      lastActivityTime: now,
       teamAPlayers: [hostPlayer],
       teamAName: teamAName.isNotEmpty ? teamAName : "Team A",
       teamBName: teamBName.isNotEmpty ? teamBName : "Team B",
@@ -71,15 +73,41 @@ class MatchLobbyProvider with ChangeNotifier {
 
     final docRef = _db.collection('matches').doc(matchId);
 
-    // FIXED: joinTeam only adds the player.
-    // Overs are calculated dynamically in ScoringProvider, so we don't manually increment 'totalOvers' here.
     if (teamSide == 'A') {
       await docRef.update({
-        'teamAPlayers': FieldValue.arrayUnion([player.toMap()])
+        'teamAPlayers': FieldValue.arrayUnion([player.toMap()]),
+        'lastActivityTime': FieldValue.serverTimestamp(),
       });
     } else {
       await docRef.update({
-        'teamBPlayers': FieldValue.arrayUnion([player.toMap()])
+        'teamBPlayers': FieldValue.arrayUnion([player.toMap()]),
+        'lastActivityTime': FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  // --- NEW: Add Guest Player ---
+  Future<void> addGuestPlayer(String matchId, String teamSide, String name) async {
+    // Generate a temporary unique ID for the guest
+    final guestId = "guest_${const Uuid().v4().substring(0, 8)}";
+
+    final guest = LobbyPlayer(
+      uid: guestId,
+      name: "$name (Guest)", // Mark as guest visually
+      photoUrl: null, // No photo for guests
+    );
+
+    final docRef = _db.collection('matches').doc(matchId);
+
+    if (teamSide == 'A') {
+      await docRef.update({
+        'teamAPlayers': FieldValue.arrayUnion([guest.toMap()]),
+        'lastActivityTime': FieldValue.serverTimestamp(),
+      });
+    } else {
+      await docRef.update({
+        'teamBPlayers': FieldValue.arrayUnion([guest.toMap()]),
+        'lastActivityTime': FieldValue.serverTimestamp(),
       });
     }
   }
@@ -88,18 +116,21 @@ class MatchLobbyProvider with ChangeNotifier {
     final field = teamSide == 'A' ? 'captainAId' : 'captainBId';
     await _db.collection('matches').doc(matchId).update({
       field: userId,
+      'lastActivityTime': FieldValue.serverTimestamp(),
     });
   }
 
   Future<void> proceedToToss(String matchId) async {
     await _db.collection('matches').doc(matchId).update({
       'status': 'TOSS',
+      'lastActivityTime': FieldValue.serverTimestamp(),
     });
   }
 
   Future<void> saveTossWinner(String matchId, String winningTeamSide) async {
     await _db.collection('matches').doc(matchId).update({
       'tossWinnerTeam': winningTeamSide,
+      'lastActivityTime': FieldValue.serverTimestamp(),
     });
   }
 
@@ -107,6 +138,7 @@ class MatchLobbyProvider with ChangeNotifier {
     await _db.collection('matches').doc(matchId).update({
       'tossDecision': decision,
       'status': 'LIVE',
+      'lastActivityTime': FieldValue.serverTimestamp(),
     });
   }
 

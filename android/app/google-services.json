@@ -22,6 +22,14 @@
           }
         },
         {
+          "client_id": "142783030266-tpc7indckgb2d4uhrnn8o8b3ejpkm43k.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mihtunapps.rubberball",
+            "certificate_hash": "41b1534a2e459eedca7f0cd88e3979e61a4c8166"
+          }
+        },
+        {
           "client_id": "142783030266-76ctro1chuul269ohtlhja6olcnapc7l.apps.googleusercontent.com",
           "client_type": 3
         }

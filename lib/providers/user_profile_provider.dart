@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:rubberball/models/user_profile_model.dart';
-import 'package:rubberball/models/match_lobby_model.dart';
 
 class UserProfileProvider with ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -11,7 +10,7 @@ class UserProfileProvider with ChangeNotifier {
 
   UserProfileModel? _user;
   List<Map<String, dynamic>> _recentMatches = [];
-  String _lastTeamPlayed = "Free Agent"; // Default
+  String _lastTeamPlayed = "Free Agent";
 
   bool _isLoading = true;
 
@@ -72,14 +71,14 @@ class UserProfileProvider with ChangeNotifier {
     );
   }
 
-  // --- Real-time User History & Last Team Logic ---
+  // --- Real-time User History (Querying match_history) ---
   void _subscribeToUserHistory(String uid) {
     _historySubscription?.cancel();
+
+    // Query the root-level 'match_history' collection for individual games
     _historySubscription = _firestore
-        .collection('matches')
-        .where('status', isEqualTo: 'SESSION_ENDED')
-        .orderBy('createdAt', descending: true)
-    // Fetch more than 5 to ensure we find valid ones, but limit for performance
+        .collection('match_history')
+        .orderBy('timestamp', descending: true)
         .limit(20)
         .snapshots()
         .listen((snapshot) {
@@ -89,16 +88,22 @@ class UserProfileProvider with ChangeNotifier {
 
       for (var doc in snapshot.docs) {
         final data = doc.data();
-        final lobby = MatchLobbyModel.fromMap(data);
 
-        // Check participation
-        bool inTeamA = lobby.teamAPlayers.any((p) => p.uid == uid);
-        bool inTeamB = lobby.teamBPlayers.any((p) => p.uid == uid);
+        // Parse players manually as data structure is raw JSON here
+        // Note: Check if teamAPlayers exists and is List
+        final teamAList = (data['teamAPlayers'] as List?) ?? [];
+        final teamBList = (data['teamBPlayers'] as List?) ?? [];
+
+        // Map to UIDs
+        final teamAIds = teamAList.map((e) => e['uid']).toList();
+        final teamBIds = teamBList.map((e) => e['uid']).toList();
+
+        bool inTeamA = teamAIds.contains(uid);
+        bool inTeamB = teamBIds.contains(uid);
 
         if (inTeamA || inTeamB) {
-          // Capture the most recent team name (first iteration match is latest)
           if (latestTeamName == null) {
-            latestTeamName = inTeamA ? lobby.teamAName : lobby.teamBName;
+            latestTeamName = inTeamA ? data['teamAName'] : data['teamBName'];
           }
 
           String result = "Draw";
@@ -106,10 +111,13 @@ class UserProfileProvider with ChangeNotifier {
           else if (data['winner'] == 'B') result = inTeamB ? "WON" : "LOST";
           else if (data['winner'] == 'DRAW') result = "DRAW";
 
-          final date = lobby.createdAt;
+          DateTime date = DateTime.now();
+          if (data['timestamp'] != null) {
+            date = (data['timestamp'] as Timestamp).toDate();
+          }
 
           userMatches.add({
-            'title': "${lobby.teamAName} vs ${lobby.teamBName}",
+            'title': "${data['teamAName']} vs ${data['teamBName']}",
             'date': "${date.day}/${date.month}/${date.year}",
             'result': result,
             'isWin': result == "WON",
